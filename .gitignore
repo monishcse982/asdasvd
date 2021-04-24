@@ -1,0 +1,7 @@
+#Directories
+node_modules/
+logs/
+env/
+
+#Files
+workspace.code-workspace
