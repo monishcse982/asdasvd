@@ -16,6 +16,36 @@ let Admin = mongoose.model("Admin");
 
 let roles = ["admin", "operator"];
 
+let validateAdminSession = (adminId) => {
+  return new Promise((resolve) => {
+    redisClient.get(adminId, (err, value) => {
+      if (err) {
+        logger.error(err);
+        resolve("error");
+      } else if (value == null) {
+        resolve(false);
+      } else if (value != null) {
+        resolve(true);
+      }
+    });
+  });
+};
+
+let validateUserRole = (userId, role) => {
+  return new Promise((resolve) => {
+    Admin.findOne({ adminId: userId }, (err, admin) => {
+      if (err) {
+        logger.error(err);
+        resolve("error");
+      } else if (admin == null) {
+        resolve("invalid");
+      } else {
+        resolve(admin.role.toString());
+      }
+    });
+  });
+};
+
 // Login
 adminRouter.post("/login", (req, res, next) => {
   if (!req.body.adminName || !req.body.password) {
@@ -29,7 +59,7 @@ adminRouter.post("/login", (req, res, next) => {
       admin.token = admin.generateJWT();
       redisClient.setex(
         admin.adminId,
-        parseInt(ENVS.SESSION_TIMEOUT),
+        parseInt(ENVS.SESSION_TIMEOUT_SECONDS),
         admin.token
       );
       logger.info("Login successful for : " + req.body.adminName);
@@ -41,25 +71,17 @@ adminRouter.post("/login", (req, res, next) => {
 });
 
 // Logout
-adminRouter.post("/logout", (req, res) => {
-  let isSessionActive = null;
-  redisClient.get(req.body.adminId, (err, value) => {
-    if (err) {
-      logger.error(err);
-      return res
-        .status(500)
-        .json({ error: "Admin session closed due to server error" });
-    } else if (value != null) {
-      isSessionActive = true;
-    } else if (value == null) {
-      isSessionActive = false;
-    }
-  });
-  if (!isSessionActive) {
-    return res.status(400).json({ error: "Admin not loggedin" });
-  } else if (!req.body.adminId) {
+adminRouter.post("/logout", async (req, res) => {
+  if (!req.body.adminId) {
     return res.status(422).json({ error: "AdminID can't be blank" });
-  } else {
+  }
+  const isSessionActive = await validateAdminSession(req.body.adminId);
+  if (isSessionActive === "error") {
+    return res
+      .status(500)
+      .json({ error: "Admin session closed due to server error" });
+  }
+  if (isSessionActive) {
     redisClient.del(req.body.adminId.toString(), (err) => {
       if (err) {
         logger.error(err.toString());
@@ -67,43 +89,63 @@ adminRouter.post("/logout", (req, res) => {
         return res.status(200).json({ message: "Logout successful!" });
       }
     });
+  } else {
+    return res.status(400).json({ error: "Admin not logged in" });
   }
 });
 
-// Get admin by id
-adminRouter.get("/:userId", auth.required, (req, res, next) => {
-  let userId = req.params.userId;
-  Admin.findOne({ adminId: userId }, (err, admin) => {
-    if (err) {
-      next(err);
-    }
-    if (admin == null) {
-      return res.status(404).json({ message: "Invalid adminId" });
-    }
-    return res.status(200).json({ admin: admin.toProfileJSON() });
-  });
-});
+// Get one or all admins
+adminRouter.get("/get", auth.required, async (req, res, next) => {
+  const isSessionActive = await validateAdminSession(req.body.adminId);
+  if (isSessionActive === "error") {
+    return res
+      .status(500)
+      .json({ error: "Admin session closed due to server error" });
+  } else if (!isSessionActive) {
+    return res.status(400).json({ message: "Requester not logged in" });
+  }
 
-// Get all admins
-adminRouter.get("/", auth.required, (req, res, next) => {
-  let adminDetails = [];
-  Admin.find({}, (err, allAdmins) => {
-    if (err) {
-      logger.error(err.toString());
-      next(err);
-    }
-    if (allAdmins == null) {
-      return res.status(404).json({ message: "No admins found" });
-    }
-    for (let index = 0; index < allAdmins.length; index++) {
-      adminDetails.push(allAdmins[index].toProfileJSON());
-    }
-    return res.status(200).json({ admins: adminDetails });
-  });
+  let userId = req.body.adminId;
+
+  if (userId === "all") {
+    let adminDetails = [];
+    Admin.find({}, (err, allAdmins) => {
+      if (err) {
+        logger.error(err.toString());
+        next(err);
+      }
+      if (allAdmins == null) {
+        return res.status(404).json({ message: "No admins found" });
+      }
+      for (let index = 0; index < allAdmins.length; index++) {
+        adminDetails.push(allAdmins[index].toProfileJSON());
+      }
+      return res.status(200).json({ admins: adminDetails });
+    });
+  } else {
+    Admin.findOne({ adminId: userId }, (err, admin) => {
+      if (err) {
+        next(err);
+      }
+      if (admin == null) {
+        return res.status(404).json({ message: "Invalid adminId" });
+      }
+      return res.status(200).json({ admin: admin.toProfileJSON() });
+    });
+  }
 });
 
 // Remove admin
-adminRouter.delete("/", auth.required, (req, res, next) => {
+adminRouter.delete("/", auth.required, async (req, res, next) => {
+  const isSessionActive = await validateAdminSession(req.body.requester);
+  if (isSessionActive === "error") {
+    return res
+      .status(500)
+      .json({ error: "Admin session closed due to server error" });
+  } else if (!isSessionActive) {
+    return res.status(400).json({ message: "Requester not logged in" });
+  }
+
   if (req.body.adminToDelete === req.body.requester) {
     return res.status(403).json({ error: "Can't delete self" });
   }
@@ -111,7 +153,12 @@ adminRouter.delete("/", auth.required, (req, res, next) => {
   let userId = req.body.adminToDelete;
   let requesterId = req.body.requester;
 
-  Admin.findOne({ adminId: userId }, (err, admin));
+  const isUserAdmin = await validateUserRole(requesterId);
+  if (isUserAdmin == "invalid") {
+    return res.status(422).json({ message: "Invalid adminId" });
+  } else if (isUserAdmin == "operator") {
+    return res.status(403).json({ message: "Requester is not an admin" });
+  }
 
   Admin.findOneAndDelete({ adminId: userId }, (err, admin) => {
     if (err) {
@@ -120,12 +167,13 @@ adminRouter.delete("/", auth.required, (req, res, next) => {
     if (admin == null) {
       return res
         .status(404)
-        .json({ message: "Admin with given ID was not found" });
+        .json({ message: "User with given ID was not found" });
     } else {
       logger.info(
-        "Admin with id: %s was deleted. Request sent by admin with id : %s",
-        userId,
-        requesterId
+        "Admin with id : " +
+          userId +
+          "was deleted. Request sent by admin with id : " +
+          requesterId
       );
       return res.status(200).json({ message: "User deleted." });
     }

@@ -42,7 +42,7 @@ AdminSchema.methods.validatePassword = function (password) {
 
 AdminSchema.methods.generateJWT = function () {
   let now = new Date();
-  let expiry = new Date(now.getTime() + ENVS.SESSION_TIMEOUT * 1000);
+  let expiry = new Date(now.getTime() + ENVS.SESSION_TIMEOUT_SECONDS * 1000);
 
   return jsonwebtoken.sign(
     {
@@ -68,6 +68,7 @@ AdminSchema.methods.toProfileJSON = function () {
     id: this.adminId,
     phone: this.phone,
     email: this.email,
+    role: this.role,
   };
 };
 
