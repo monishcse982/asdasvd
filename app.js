@@ -1,4 +1,5 @@
-import express, { json, urlencoded } from "express";
+import express from "express";
+import urlencoded from "express";
 import cookieParser from "cookie-parser";
 import logger from "morgan";
 import { envs as ENVS } from "./config.js";
@@ -17,8 +18,8 @@ import clientRouter from "./routes/api/client.js";
 
 const app = express();
 
+app.use(express.json());
 app.use(logger("dev"));
-app.use(json());
 app.use(urlencoded({ extended: false }));
 app.use(cookieParser());
 

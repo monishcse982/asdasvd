@@ -96,7 +96,7 @@ adminRouter.post("/logout", async (req, res) => {
 
 // Get one or all admins
 adminRouter.get("/get", auth.required, async (req, res, next) => {
-  const isSessionActive = await validateAdminSession(req.body.adminId);
+  const isSessionActive = await validateAdminSession(req.body.requester);
   if (isSessionActive === "error") {
     return res
       .status(500)

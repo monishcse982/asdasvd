@@ -1,10 +1,10 @@
-import { Strategy as LocalStrategy } from "passport-local";
+import Strategy from "passport-local";
 import passport from "passport";
 import mongoose from "mongoose";
 let Admins = mongoose.model("Admin");
 
 passport.use(
-  new LocalStrategy(
+  new Strategy(
     {
       usernameField: "adminName",
       passwordField: "password",
