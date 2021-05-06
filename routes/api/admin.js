@@ -4,6 +4,7 @@ import passport from "passport";
 import bluebird from "bluebird";
 import auth from "../auth.js";
 import redisClient from "../../utils/redisConnect.js";
+import crypter from "../../utils/cryptoUtil.js";
 import logger from "../../utils/logger.js";
 import { envs as ENVS } from "../../config.js";
 
@@ -16,7 +17,7 @@ let Admin = mongoose.model("Admin");
 
 let roles = ["admin", "operator"];
 
-let validateAdminSession = (adminId) => {
+let validateAdminSession = (adminId, input) => {
   return new Promise((resolve) => {
     redisClient.get(adminId, (err, value) => {
       if (err) {
@@ -24,7 +25,7 @@ let validateAdminSession = (adminId) => {
         resolve("error");
       } else if (value == null) {
         resolve(false);
-      } else if (value != null) {
+      } else if (input == crypter.decrypt(value)) {
         resolve(true);
       }
     });
@@ -60,7 +61,7 @@ adminRouter.post("/login", (req, res, next) => {
       redisClient.setex(
         admin.adminId,
         parseInt(ENVS.SESSION_TIMEOUT_SECONDS),
-        admin.token
+        crypter.encrypt(req.ip)
       );
       logger.info("Login successful for : " + req.body.adminName);
       return res.json({ admin: admin.toAuthJson() });
@@ -75,7 +76,7 @@ adminRouter.post("/logout", async (req, res) => {
   if (!req.body.adminId) {
     return res.status(422).json({ error: "AdminID can't be blank" });
   }
-  const isSessionActive = await validateAdminSession(req.body.adminId);
+  const isSessionActive = await validateAdminSession(req.body.adminId, req.ip);
   if (isSessionActive === "error") {
     return res
       .status(500)
@@ -96,7 +97,7 @@ adminRouter.post("/logout", async (req, res) => {
 
 // Get one or all admins
 adminRouter.get("/get", auth.required, async (req, res, next) => {
-  const isSessionActive = await validateAdminSession(req.body.requester);
+  const isSessionActive = await validateAdminSession(req.body.requester, req.ip);
   if (isSessionActive === "error") {
     return res
       .status(500)
@@ -137,7 +138,7 @@ adminRouter.get("/get", auth.required, async (req, res, next) => {
 
 // Remove admin
 adminRouter.delete("/", auth.required, async (req, res, next) => {
-  const isSessionActive = await validateAdminSession(req.body.requester);
+  const isSessionActive = await validateAdminSession(req.body.requester, req.ip);
   if (isSessionActive === "error") {
     return res
       .status(500)
